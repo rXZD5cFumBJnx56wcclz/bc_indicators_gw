@@ -1,5 +1,6 @@
 use bc_indicators::main_trait::{BF_INDICATOR, Indicator};
-use bc_utils_lg::structs::settings::{SETTINGS_IND, SETTINGS_INDS, SETTINGS_USED_SRC};
+use bc_utils::other::{transpose, vec_len_sync_set};
+use bc_utils_lg::structs::settings::{SETTINGS_IND, SETTINGS_INDS, SETTINGS_USED_STRING_USIZE};
 use bc_utils_lg::types::maps::{FUNCS_EXTRACT_ARGS_TYPE, MAP};
 
 pub fn get_w_max(
@@ -15,7 +16,7 @@ pub fn get_w_max(
 
 pub fn get_in_from_settings<'a>(
     used_ind: &Vec<String>,
-    used_src: &Vec<SETTINGS_USED_SRC>,
+    used_src: &Vec<SETTINGS_USED_STRING_USIZE>,
     procedure_used: &Vec<usize>,
     settings: &SETTINGS_INDS,
     src: &[Vec<f64>],
@@ -42,21 +43,21 @@ pub fn get_in_from_settings<'a>(
         ));
     }
     if !procedure_used.is_empty() {
-        res = procedure_used.iter().map(|i| res[*i].clone()).collect();
+        let mut bind = res
+            .into_iter()
+            .enumerate()
+            .collect::<Vec<(usize, Vec<f64>)>>();
+        res = procedure_used
+            .iter()
+            .map(|i| {
+                bind.remove(bind.iter().enumerate().find(|v| v.1.0 == *i).unwrap().0)
+                    .1
+            })
+            .collect();
     }
     if !res.is_empty() {
-        let min_len = res
-            .iter()
-            .map(|v| v.len())
-            .min()
-            .expect("this is nan or wtf");
-        res = res
-            .into_iter()
-            .map(|v| v[v.len() - min_len..].to_vec())
-            .collect::<Vec<Vec<f64>>>();
-        return (0..min_len)
-            .map(|v| res.iter().map(|v1| v1[v]).collect::<Vec<f64>>())
-            .collect::<Vec<Vec<f64>>>();
+        vec_len_sync_set(&mut res);
+        return transpose(res);
     }
     Default::default()
 }
@@ -220,7 +221,7 @@ mod tests {
     use bc_utils::nums::{nz_coll, round_f};
     use bc_utils::other::transpose;
     use bc_utils_lg::statics::prices::{CLOSE, OPEN, OPEN_LAST, SRC_TRANSPOSE};
-    use bc_utils_lg::structs::settings::{SETTINGS_IND, SETTINGS_INDS, SETTINGS_USED_SRC};
+    use bc_utils_lg::structs::settings::{SETTINGS_IND, SETTINGS_INDS, SETTINGS_USED_STRING_USIZE};
     use bc_utils_lg::types::maps::MAP;
     use pretty_assertions::assert_eq as assert_eq_pr;
 
@@ -258,7 +259,7 @@ mod tests {
                     kwargs_usize: MAP::from_iter([("window".to_string(), 2)]),
                     kwargs_f64: MAP::default(),
                     kwargs_string: MAP::default(),
-                    used_src: vec![SETTINGS_USED_SRC { index: 1, sub_from_last_i: 0 }],
+                    used_src: vec![SETTINGS_USED_STRING_USIZE { index: 1, sub_from_last_i: 0 }],
                     used_ind: vec![],
                     procedure_used: vec![],
                 },
@@ -283,8 +284,8 @@ mod tests {
                     kwargs_f64: MAP::default(),
                     kwargs_string: MAP::default(),
                     used_src: vec![
-                        SETTINGS_USED_SRC { index: 1, sub_from_last_i: 0 },
-                        SETTINGS_USED_SRC { index: 4, sub_from_last_i: 2 },
+                        SETTINGS_USED_STRING_USIZE { index: 1, sub_from_last_i: 0 },
+                        SETTINGS_USED_STRING_USIZE { index: 4, sub_from_last_i: 2 },
                     ],
                     used_ind: vec!["rma_1".to_string()],
                     procedure_used: vec![],
@@ -341,7 +342,7 @@ mod tests {
                 kwargs_usize: MAP::from_iter([("window".to_string(), 2)]),
                 kwargs_f64: MAP::default(),
                 kwargs_string: MAP::default(),
-                used_src: vec![SETTINGS_USED_SRC { index: 1, sub_from_last_i: 0 }],
+                used_src: vec![SETTINGS_USED_STRING_USIZE { index: 1, sub_from_last_i: 0 }],
                 used_ind: vec![],
                 procedure_used: vec![],
             },
