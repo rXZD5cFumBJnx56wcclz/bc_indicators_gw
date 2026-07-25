@@ -1,59 +1,42 @@
 use bc_indicators::main_trait::{BF_INDICATOR, Indicator};
-use bc_utils::other::{transpose, vec_len_sync_set};
-use bc_utils_lg::structs::settings::{SETTINGS_IND, SETTINGS_INDS, SETTINGS_USED_STRING_USIZE};
-use bc_utils_lg::types::maps::{FUNCS_EXTRACT_ARGS_TYPE, MAP};
+use bc_utils::other::{procedure_used, transpose, vec_len_sync_set};
+use bc_utils_lg::structs::settings::{SETTINGS_IND, SETTINGS_INDS};
+use bc_utils_lg::types::maps::{MAP, PACK};
 
-pub fn get_w_max(
-    s: &SETTINGS_INDS,
-    funcs_extract_args: &MAP<&str, fn(&SETTINGS_IND) -> Box<dyn Indicator>>,
-) -> usize {
-    get_indicators_from_settings_without_bf(s, funcs_extract_args)
+pub fn get_w_max(s: &SETTINGS_INDS, pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>) -> usize {
+    get_map_from_pack(s, pack)
         .values()
         .map(|v| v.w())
         .max()
         .unwrap()
 }
 
-pub fn get_in_from_settings<'a>(
-    used_ind: &Vec<String>,
-    used_src: &Vec<SETTINGS_USED_STRING_USIZE>,
-    procedure_used: &Vec<usize>,
+pub fn get_src<'a>(
+    s: &SETTINGS_IND,
     settings: &SETTINGS_INDS,
     src: &[Vec<f64>],
     map_indicators: &MAP<&'a str, Box<dyn Indicator>>,
 ) -> Vec<Vec<f64>> {
     let mut res = vec![];
-    for used_src_el in used_src {
+    for used_src_el in &s.used_src {
         res.push({
             let sk = &src[used_src_el.index];
             sk[..sk.len() - used_src_el.sub_from_last_i].to_vec()
         });
     }
-    for used_ind_el in used_ind {
+    for used_ind_el in &s.used_ind {
         res.push(map_indicators[used_ind_el.as_str()].ind_vec(
             // recursive func
-            &get_in_from_settings(
-                &settings[used_ind_el].used_ind,
-                &settings[used_ind_el].used_src,
-                &settings[used_ind_el].procedure_used,
+            &get_src(
+                &settings[used_ind_el.as_str()],
                 settings,
                 src,
                 map_indicators,
             ),
         ));
     }
-    if !procedure_used.is_empty() {
-        let mut bind = res
-            .into_iter()
-            .enumerate()
-            .collect::<Vec<(usize, Vec<f64>)>>();
-        res = procedure_used
-            .iter()
-            .map(|i| {
-                bind.remove(bind.iter().enumerate().find(|v| v.1.0 == *i).unwrap().0)
-                    .1
-            })
-            .collect();
+    if !s.procedure_used.is_empty() {
+        res = procedure_used(res, &s.procedure_used);
     }
     if !res.is_empty() {
         vec_len_sync_set(&mut res);
@@ -62,36 +45,55 @@ pub fn get_in_from_settings<'a>(
     Default::default()
 }
 
-pub fn get_indicators_from_settings_without_bf<'a>(
+pub fn get_src_series(
+    s: &SETTINGS_IND,
+    src: &[Vec<f64>],
+    indications: &MAP<&str, f64>,
+) -> Vec<f64> {
+    let mut res = vec![];
+    for us_el in &s.used_src {
+        res.push({
+            let sk = &src[us_el.index];
+            sk[sk.len() - 1 - us_el.sub_from_last_i]
+        });
+    }
+    for ui_el in &s.used_ind {
+        res.push(indications[ui_el.as_str()]);
+    }
+    if !s.procedure_used.is_empty() {
+        res = procedure_used(res, &s.procedure_used);
+    }
+    res
+}
+
+pub fn get_map_from_pack<'a>(
     settings: &'a SETTINGS_INDS,
-    funcs_extract_args: &MAP<&'a str, fn(&SETTINGS_IND) -> Box<dyn Indicator>>,
+    pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
 ) -> MAP<&'a str, Box<dyn Indicator>> {
     settings
         .iter()
         .map(|(indicator_name, settings_indicator)| {
-            let indicator = funcs_extract_args[settings_indicator.key.as_str()](settings_indicator);
+            let indicator = pack[settings_indicator.key.as_str()](settings_indicator);
             (indicator_name.as_str(), indicator)
         })
         .collect()
 }
 
-pub fn get_indicators_from_settings<'a>(
+pub fn get_map<'a>(
     settings: &'a SETTINGS_INDS,
-    funcs_extract_args: &MAP<&'a str, fn(&SETTINGS_IND) -> Box<dyn Indicator>>,
+    pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
     in_: &[Vec<f64>],
     map_indicators: &MAP<&'a str, Box<dyn Indicator>>,
 ) -> MAP<&'a str, (BF_INDICATOR<'a>, Box<dyn Indicator>)> {
     settings
         .iter()
         .map(|(indicator_name, settings_indicator)| {
-            let indicator = funcs_extract_args[settings_indicator.key.as_str()](settings_indicator);
+            let indicator = pack[settings_indicator.key.as_str()](settings_indicator);
             (
                 indicator_name.as_str(),
                 (
-                    indicator.bf(&get_in_from_settings(
-                        &settings_indicator.used_ind,
-                        &settings_indicator.used_src,
-                        &settings_indicator.procedure_used,
+                    indicator.bf(&get_src(
+                        settings_indicator,
                         settings,
                         &in_.into_iter()
                             .map(|v| v[..v.len() - 1].to_vec())
@@ -114,17 +116,12 @@ pub struct Indicators<'a> {
 impl<'a> Indicators<'a> {
     pub fn new(
         settings: &'a SETTINGS_INDS,
-        funcs_extract_args: &MAP<&'a str, fn(&SETTINGS_IND) -> Box<dyn Indicator>>,
+        pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
         src_transpose: &[Vec<f64>],
     ) -> Self {
-        let ind_without_bf = get_indicators_from_settings_without_bf(settings, funcs_extract_args);
+        let ind_without_bf = get_map_from_pack(settings, pack);
         Self {
-            indicators: get_indicators_from_settings(
-                settings,
-                funcs_extract_args,
-                src_transpose,
-                &ind_without_bf,
-            ),
+            indicators: get_map(settings, pack, src_transpose, &ind_without_bf),
             indicators_without_bf: ind_without_bf,
         }
     }
@@ -132,10 +129,9 @@ impl<'a> Indicators<'a> {
         &mut self,
         src_transpose: &[Vec<f64>],
         s: &'a SETTINGS_INDS,
-        fa: &FUNCS_EXTRACT_ARGS_TYPE<SETTINGS_IND, Box<dyn Indicator>>,
+        fa: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
     ) {
-        self.indicators =
-            get_indicators_from_settings(s, fa, src_transpose, &self.indicators_without_bf);
+        self.indicators = get_map(s, fa, src_transpose, &self.indicators_without_bf);
     }
 }
 
@@ -146,50 +142,32 @@ pub struct IndicatorsGateway<'a> {
 }
 
 impl<'a> IndicatorsGateway<'a> {
-    pub fn new(
-        indicators: *const Indicators<'a>,
-        settings: &'a SETTINGS_INDS,
-    ) -> Self {
-        Self { indicators, settings }
+    pub fn new(indicators: *const Indicators<'a>, settings: &'a SETTINGS_INDS) -> Self {
+        Self {
+            indicators,
+            settings,
+        }
     }
-    pub fn indications_series(
-        &self,
-        buffer_in: &[Vec<f64>],
-    ) -> MAP<&'a str, f64> {
+}
+impl<'a> IndicatorsGateway<'a> {
+    pub fn indications_series(&self, buffer_in: &[Vec<f64>]) -> MAP<&'a str, f64> {
         unsafe { &*self.settings }
             .iter()
             .fold(MAP::default(), |mut map, setting| {
                 let key_uniq_str = setting.0.as_str();
-                let mut src_arg = vec![];
-                for us_el in &setting.1.used_src {
-                    src_arg.push({
-                        let sk = &buffer_in[us_el.index];
-                        sk[sk.len() - 1 - us_el.sub_from_last_i]
-                    });
-                }
-                for ui_el in &setting.1.used_ind {
-                    src_arg.push(map[ui_el.as_str()]);
-                }
-                if setting.1.procedure_used.len() != 0 {
-                    src_arg = setting
-                        .1
-                        .procedure_used
-                        .iter()
-                        .map(|i| src_arg[*i])
-                        .collect();
-                }
                 let indicator = unsafe { &(&(*self.indicators).indicators)[key_uniq_str] };
                 map.insert(
                     key_uniq_str,
-                    indicator.1.ind_with_bf(src_arg.as_slice(), &indicator.0, 0),
+                    indicator.1.ind_with_bf(
+                        &get_src_series(&setting.1, buffer_in, &map),
+                        &indicator.0,
+                        0,
+                    ),
                 );
                 map
             })
     }
-    pub fn indications_vec(
-        &self,
-        src: &[Vec<f64>],
-    ) -> MAP<&'a str, Vec<f64>> {
+    pub fn indications_vec(&self, src: &[Vec<f64>]) -> MAP<&'a str, Vec<f64>> {
         unsafe { &*self.settings }
             .iter()
             .map(|(k, setting)| {
@@ -197,10 +175,8 @@ impl<'a> IndicatorsGateway<'a> {
                 let indicator = unsafe { &(&(*self.indicators).indicators)[key_uniq] };
                 (
                     key_uniq,
-                    indicator.1.ind_vec(&get_in_from_settings(
-                        &setting.used_ind,
-                        &setting.used_src,
-                        &setting.procedure_used,
+                    indicator.1.ind_vec(&get_src(
+                        setting,
                         unsafe { &*self.settings },
                         src,
                         unsafe { &(*self.indicators).indicators_without_bf },
@@ -217,11 +193,11 @@ mod tests {
 
     use bc_indicators::prelude::Indicator;
     use bc_indicators::{rma::RMA, rsi::RSI};
-    use bc_pack_indicators::FUNCS_EXTRACT_ARGS;
+    use bc_pack_indicators::PACK;
+    use bc_test_kit::prelude::*;
     use bc_utils::nums::{nz_coll, round_f};
     use bc_utils::other::transpose;
-    use bc_utils_lg::statics::prices::{CLOSE, OPEN, OPEN_LAST, SRC_TRANSPOSE};
-    use bc_utils_lg::structs::settings::{SETTINGS_IND, SETTINGS_INDS, SETTINGS_USED_STRING_USIZE};
+    use bc_utils_lg::structs::settings::{SETTINGS_IND, SETTINGS_INDS, SETTINGS_USED_USIZE};
     use bc_utils_lg::types::maps::MAP;
     use pretty_assertions::assert_eq as assert_eq_pr;
 
@@ -241,8 +217,8 @@ mod tests {
                 procedure_used: vec![],
             },
         )]);
-        let funcs_extract_args = FUNCS_EXTRACT_ARGS();
-        let res = get_indicators_from_settings_without_bf(&settings, &funcs_extract_args);
+        let pack = PACK();
+        let res = get_map_from_pack(&settings, &pack);
         let res_1 = res.get("rsi_1").unwrap().as_ref();
         let rsi_test_1 = RSI::new(10);
         let rsi_test_2 = (res_1 as &dyn Any).downcast_ref::<RSI>().unwrap();
@@ -259,7 +235,10 @@ mod tests {
                     kwargs_usize: MAP::from_iter([("window".to_string(), 2)]),
                     kwargs_f64: MAP::default(),
                     kwargs_string: MAP::default(),
-                    used_src: vec![SETTINGS_USED_STRING_USIZE { index: 1, sub_from_last_i: 0 }],
+                    used_src: vec![SETTINGS_USED_USIZE {
+                        index: 1,
+                        sub_from_last_i: 0,
+                    }],
                     used_ind: vec![],
                     procedure_used: vec![],
                 },
@@ -284,8 +263,14 @@ mod tests {
                     kwargs_f64: MAP::default(),
                     kwargs_string: MAP::default(),
                     used_src: vec![
-                        SETTINGS_USED_STRING_USIZE { index: 1, sub_from_last_i: 0 },
-                        SETTINGS_USED_STRING_USIZE { index: 4, sub_from_last_i: 2 },
+                        SETTINGS_USED_USIZE {
+                            index: 1,
+                            sub_from_last_i: 0,
+                        },
+                        SETTINGS_USED_USIZE {
+                            index: 4,
+                            sub_from_last_i: 2,
+                        },
                     ],
                     used_ind: vec!["rma_1".to_string()],
                     procedure_used: vec![],
@@ -317,7 +302,7 @@ mod tests {
                 },
             ),
         ]);
-        let indicators = Indicators::new(&settings, &FUNCS_EXTRACT_ARGS(), &SRC_TRANSPOSE);
+        let indicators = Indicators::new(&settings, &PACK(), &SRC_TRANSPOSE);
         let indicators_gw = IndicatorsGateway::new(&indicators, &settings);
         let res_1 = indicators_gw.indications_series(&SRC_TRANSPOSE);
         let res_2 = (RMA::new(2).ind_f(
@@ -342,12 +327,15 @@ mod tests {
                 kwargs_usize: MAP::from_iter([("window".to_string(), 2)]),
                 kwargs_f64: MAP::default(),
                 kwargs_string: MAP::default(),
-                used_src: vec![SETTINGS_USED_STRING_USIZE { index: 1, sub_from_last_i: 0 }],
+                used_src: vec![SETTINGS_USED_USIZE {
+                    index: 1,
+                    sub_from_last_i: 0,
+                }],
                 used_ind: vec![],
                 procedure_used: vec![],
             },
         )]);
-        let indicators = Indicators::new(&settings, &FUNCS_EXTRACT_ARGS(), &SRC_TRANSPOSE);
+        let indicators = Indicators::new(&settings, &PACK(), &SRC_TRANSPOSE);
         let indicators_gw = IndicatorsGateway::new(&indicators, &settings);
         let res_1 = indicators_gw.indications_vec(&SRC_TRANSPOSE)["rsi_1"].clone();
         let res_2 = RSI::new(2).ind_vec(&transpose(vec![OPEN.to_vec()]));
