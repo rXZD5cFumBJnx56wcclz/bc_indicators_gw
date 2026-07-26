@@ -1,4 +1,4 @@
-use bc_indicators::main_trait::{BF_INDICATOR, Indicator};
+use bc_indicators::main_trait::Indicator;
 use bc_utils::other::{procedure_used, transpose, vec_len_sync_set};
 use bc_utils_lg::structs::settings::{SETTINGS_IND, SETTINGS_INDS};
 use bc_utils_lg::types::maps::{MAP, PACK};
@@ -84,24 +84,22 @@ pub fn get_map<'a>(
     pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
     in_: &[Vec<f64>],
     map_indicators: &MAP<&'a str, Box<dyn Indicator>>,
-) -> MAP<&'a str, (BF_INDICATOR<'a>, Box<dyn Indicator>)> {
+) -> MAP<&'a str, Box<dyn Indicator>> {
     settings
         .iter()
         .map(|(indicator_name, settings_indicator)| {
             let indicator = pack[settings_indicator.key.as_str()](settings_indicator);
+            indicator.init_bf(&get_src(
+                settings_indicator,
+                settings,
+                &in_.into_iter()
+                    .map(|v| v[..v.len() - 1].to_vec())
+                    .collect::<Vec<Vec<f64>>>(),
+                map_indicators,
+            ));
             (
                 indicator_name.as_str(),
-                (
-                    indicator.bf(&get_src(
-                        settings_indicator,
-                        settings,
-                        &in_.into_iter()
-                            .map(|v| v[..v.len() - 1].to_vec())
-                            .collect::<Vec<Vec<f64>>>(),
-                        map_indicators,
-                    )),
-                    indicator,
-                ),
+                indicator,
             )
         })
         .collect()
@@ -110,7 +108,7 @@ pub fn get_map<'a>(
 #[derive(Default)]
 pub struct Indicators<'a> {
     pub indicators_without_bf: MAP<&'a str, Box<dyn Indicator>>,
-    pub indicators: MAP<&'a str, (BF_INDICATOR<'a>, Box<dyn Indicator>)>,
+    pub indicators: MAP<&'a str, Box<dyn Indicator>>,
 }
 
 impl<'a> Indicators<'a> {
@@ -158,10 +156,8 @@ impl<'a> IndicatorsGateway<'a> {
                 let indicator = unsafe { &(&(*self.indicators).indicators)[key_uniq_str] };
                 map.insert(
                     key_uniq_str,
-                    indicator.1.ind_with_bf(
+                    indicator.ind(
                         &get_src_series(&setting.1, buffer_in, &map),
-                        &indicator.0,
-                        0,
                     ),
                 );
                 map
@@ -175,7 +171,7 @@ impl<'a> IndicatorsGateway<'a> {
                 let indicator = unsafe { &(&(*self.indicators).indicators)[key_uniq] };
                 (
                     key_uniq,
-                    indicator.1.ind_vec(&get_src(
+                    indicator.ind_vec(&get_src(
                         setting,
                         unsafe { &*self.settings },
                         src,
@@ -193,7 +189,7 @@ mod tests {
 
     use bc_indicators::prelude::Indicator;
     use bc_indicators::{rma::RMA, rsi::RSI};
-    use bc_pack_indicators::PACK;
+    use bc_packs::PACK_IND;
     use bc_test_kit::prelude::*;
     use bc_utils::nums::{nz_coll, round_f};
     use bc_utils::other::transpose;
@@ -217,8 +213,7 @@ mod tests {
                 procedure_used: vec![],
             },
         )]);
-        let pack = PACK();
-        let res = get_map_from_pack(&settings, &pack);
+        let res = get_map_from_pack(&settings, &PACK_IND);
         let res_1 = res.get("rsi_1").unwrap().as_ref();
         let rsi_test_1 = RSI::new(10);
         let rsi_test_2 = (res_1 as &dyn Any).downcast_ref::<RSI>().unwrap();
@@ -302,7 +297,7 @@ mod tests {
                 },
             ),
         ]);
-        let indicators = Indicators::new(&settings, &PACK(), &SRC_TRANSPOSE);
+        let indicators = Indicators::new(&settings, &PACK_IND, &SRC_TRANSPOSE);
         let indicators_gw = IndicatorsGateway::new(&indicators, &settings);
         let res_1 = indicators_gw.indications_series(&SRC_TRANSPOSE);
         let res_2 = (RMA::new(2).ind_f(
@@ -335,7 +330,7 @@ mod tests {
                 procedure_used: vec![],
             },
         )]);
-        let indicators = Indicators::new(&settings, &PACK(), &SRC_TRANSPOSE);
+        let indicators = Indicators::new(&settings, &PACK_IND, &SRC_TRANSPOSE);
         let indicators_gw = IndicatorsGateway::new(&indicators, &settings);
         let res_1 = indicators_gw.indications_vec(&SRC_TRANSPOSE)["rsi_1"].clone();
         let res_2 = RSI::new(2).ind_vec(&transpose(vec![OPEN.to_vec()]));
