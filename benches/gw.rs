@@ -5,7 +5,7 @@ use bc_test_kit::prelude::*;
 use bc_utils_lg::structs::settings::{SETTINGS_IND, SETTINGS_INDS, SETTINGS_USED_USIZE};
 use bc_utils_lg::types::maps::MAP;
 
-use bc_indicators_gw::gw::{Indicators, IndicatorsGateway};
+use bc_indicators_gw::gw::{Indicators, IndicatorsExt, IndicatorsGateway};
 
 fn indications_series_1(c: &mut Criterion) {
     let s = SETTINGS_INDS::from_iter([(
@@ -23,7 +23,7 @@ fn indications_series_1(c: &mut Criterion) {
             procedure_used: vec![],
         },
     )]);
-    let indicators = Indicators::new(&s, &PACK_IND, &SRC_TRANSPOSE);
+    let indicators = Indicators::new(&SRC_TRANSPOSE, &s, &PACK_IND);
     let indicators_gw = IndicatorsGateway::new(&indicators, &s);
     c.bench_function("indications_series_1", |b| {
         b.iter(|| indicators_gw.indications_series(&SRC_TRANSPOSE))
@@ -86,7 +86,7 @@ fn indications_series_2(c: &mut Criterion) {
             },
         ),
     ]);
-    let indicators = Indicators::new(&s, &PACK_IND, &SRC_TRANSPOSE);
+    let indicators = Indicators::new(&SRC_TRANSPOSE, &s, &PACK_IND);
     let indicators_gw = IndicatorsGateway::new(&indicators, &s);
     c.bench_function("indications_series_2", |b| {
         b.iter(|| indicators_gw.indications_series(&SRC_TRANSPOSE))

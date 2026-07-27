@@ -3,14 +3,6 @@ use bc_utils::other::{procedure_used, transpose, vec_len_sync_set};
 use bc_utils_lg::structs::settings::{SETTINGS_IND, SETTINGS_INDS};
 use bc_utils_lg::types::maps::{MAP, PACK};
 
-pub fn get_w_max(s: &SETTINGS_INDS, pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>) -> usize {
-    get_map_from_pack(s, pack)
-        .values()
-        .map(|v| v.w())
-        .max()
-        .unwrap()
-}
-
 pub fn get_src<'a>(
     s: &SETTINGS_IND,
     settings: &SETTINGS_INDS,
@@ -66,71 +58,69 @@ pub fn get_src_series(
     res
 }
 
-pub fn get_map_from_pack<'a>(
-    settings: &'a SETTINGS_INDS,
-    pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
-) -> MAP<&'a str, Box<dyn Indicator>> {
-    settings
-        .iter()
-        .map(|(indicator_name, settings_indicator)| {
-            let indicator = pack[settings_indicator.key.as_str()](settings_indicator);
-            (indicator_name.as_str(), indicator)
-        })
-        .collect()
-}
+pub type Indicators<'a> = MAP<&'a str, Box<dyn Indicator>>;
 
-pub fn get_map<'a>(
-    settings: &'a SETTINGS_INDS,
-    pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
-    in_: &[Vec<f64>],
-    map_indicators: &MAP<&'a str, Box<dyn Indicator>>,
-) -> MAP<&'a str, Box<dyn Indicator>> {
-    settings
-        .iter()
-        .map(|(indicator_name, settings_indicator)| {
-            let indicator = pack[settings_indicator.key.as_str()](settings_indicator);
-            indicator.init_bf(&get_src(
-                settings_indicator,
-                settings,
-                &in_.into_iter()
-                    .map(|v| v[..v.len() - 1].to_vec())
-                    .collect::<Vec<Vec<f64>>>(),
-                map_indicators,
-            ));
-            (
-                indicator_name.as_str(),
-                indicator,
-            )
-        })
-        .collect()
-}
-
-#[derive(Default)]
-pub struct Indicators<'a> {
-    pub indicators_without_bf: MAP<&'a str, Box<dyn Indicator>>,
-    pub indicators: MAP<&'a str, Box<dyn Indicator>>,
-}
-
-impl<'a> Indicators<'a> {
-    pub fn new(
+pub trait IndicatorsExt<'a> {
+    fn new_empty_bf(
         settings: &'a SETTINGS_INDS,
         pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
-        src_transpose: &[Vec<f64>],
-    ) -> Self {
-        let ind_without_bf = get_map_from_pack(settings, pack);
-        Self {
-            indicators: get_map(settings, pack, src_transpose, &ind_without_bf),
-            indicators_without_bf: ind_without_bf,
+    ) -> Self;
+    fn init_bf(
+        &self,
+        buffer: &[Vec<f64>],
+        s: &'a SETTINGS_INDS,
+        pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
+    );
+    fn new(
+        buffer: &[Vec<f64>],
+        s: &'a SETTINGS_INDS,
+        pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
+    ) -> Self;
+}
+
+impl<'a> IndicatorsExt<'a> for Indicators<'a> {
+    fn new_empty_bf(s: &'a SETTINGS_INDS, pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>) -> Self {
+        s.iter()
+            .map(|(indicator_name, settings_indicator)| {
+                (
+                    indicator_name.as_str(),
+                    pack[settings_indicator.key.as_str()](settings_indicator),
+                )
+            })
+            .collect()
+    }
+    fn init_bf(
+        &self,
+        buffer: &[Vec<f64>],
+        s: &'a SETTINGS_INDS,
+        pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
+    ) {
+        // Indicators are initialized with an empty buffer because the default
+        // implementation of `ind_vec` generates values via `ind_coll`, which
+        // mutates the buffer.
+        let empty_ind = Indicators::new_empty_bf(s, pack);
+        for (k, settings_indicator) in s.iter() {
+            self[k.as_str()].init_bf(&get_src(settings_indicator, s, &buffer, &empty_ind));
         }
     }
-    pub fn update_bf(
-        &mut self,
-        src_transpose: &[Vec<f64>],
+    fn new(
+        buffer: &[Vec<f64>],
         s: &'a SETTINGS_INDS,
-        fa: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
-    ) {
-        self.indicators = get_map(s, fa, src_transpose, &self.indicators_without_bf);
+        pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
+    ) -> Self {
+        let bind = Indicators::new_empty_bf(s, pack);
+        bind.init_bf(buffer, s, pack);
+        bind
     }
+}
+
+pub fn get_w_max(s: &SETTINGS_INDS, pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>) -> usize {
+    Indicators::new_empty_bf(s, pack)
+        .values()
+        .into_iter()
+        .map(|ind| ind.w())
+        .max()
+        .unwrap()
 }
 
 #[derive(Default)]
@@ -153,30 +143,30 @@ impl<'a> IndicatorsGateway<'a> {
             .iter()
             .fold(MAP::default(), |mut map, setting| {
                 let key_uniq_str = setting.0.as_str();
-                let indicator = unsafe { &(&(*self.indicators).indicators)[key_uniq_str] };
+                let indicator = unsafe { &(&(*self.indicators))[key_uniq_str] };
                 map.insert(
                     key_uniq_str,
-                    indicator.ind(
-                        &get_src_series(&setting.1, buffer_in, &map),
-                    ),
+                    indicator.ind(&get_src_series(&setting.1, buffer_in, &map)),
                 );
                 map
             })
+    }
+    pub fn execute_bf(&self) {
+        for ind in unsafe { &*self.indicators }.values() {
+            ind.execute_bf();
+        }
     }
     pub fn indications_vec(&self, src: &[Vec<f64>]) -> MAP<&'a str, Vec<f64>> {
         unsafe { &*self.settings }
             .iter()
             .map(|(k, setting)| {
                 let key_uniq = k.as_str();
-                let indicator = unsafe { &(&(*self.indicators).indicators)[key_uniq] };
+                let indicator = unsafe { &(&(*self.indicators))[key_uniq] };
                 (
                     key_uniq,
-                    indicator.ind_vec(&get_src(
-                        setting,
-                        unsafe { &*self.settings },
-                        src,
-                        unsafe { &(*self.indicators).indicators_without_bf },
-                    )),
+                    indicator.ind_vec(&get_src(setting, unsafe { &*self.settings }, src, unsafe {
+                        &(*self.indicators)
+                    })),
                 )
             })
             .collect()
@@ -213,7 +203,7 @@ mod tests {
                 procedure_used: vec![],
             },
         )]);
-        let res = get_map_from_pack(&settings, &PACK_IND);
+        let res = Indicators::new_empty_bf(&settings, &PACK_IND);
         let res_1 = res.get("rsi_1").unwrap().as_ref();
         let rsi_test_1 = RSI::new(10);
         let rsi_test_2 = (res_1 as &dyn Any).downcast_ref::<RSI>().unwrap();
@@ -297,7 +287,11 @@ mod tests {
                 },
             ),
         ]);
-        let indicators = Indicators::new(&settings, &PACK_IND, &SRC_TRANSPOSE);
+        let indicators = Indicators::new(
+            &transpose(transpose(SRC_TRANSPOSE.to_vec())[..49].to_vec()),
+            &settings,
+            &PACK_IND,
+        );
         let indicators_gw = IndicatorsGateway::new(&indicators, &settings);
         let res_1 = indicators_gw.indications_series(&SRC_TRANSPOSE);
         let res_2 = (RMA::new(2).ind_f(
@@ -311,6 +305,43 @@ mod tests {
             / 3.;
         assert_eq_pr!(round_f(res_1["avg_1"], &4,), round_f(res_2, &4,),);
         assert_eq_pr!(res_1["minus_1"], 1.0);
+    }
+
+    #[test]
+    fn indication_execute_bf_1() {
+        let settings = SETTINGS_INDS::from_iter([(
+            "sma_1".to_string(),
+            SETTINGS_IND {
+                key: "sma".to_string(),
+                kwargs_usize: MAP::from_iter([("window".to_string(), 3)]),
+                kwargs_f64: MAP::default(),
+                kwargs_string: MAP::default(),
+                used_src: vec![SETTINGS_USED_USIZE {
+                    index: 1,
+                    sub_from_last_i: 0,
+                }],
+                used_ind: vec![],
+                procedure_used: vec![],
+            },
+        )]);
+        let indicators = Indicators::new(&SRC_TRANSPOSE, &settings, &PACK_IND);
+        let indicators_gw = IndicatorsGateway::new(&indicators, &settings);
+        assert_eq_pr!(
+            indicators_gw.indications_series(&SRC_TRANSPOSE),
+            indicators_gw.indications_series(&SRC_TRANSPOSE),
+        );
+        pretty_assertions::assert_ne!(
+            {
+                let res = indicators_gw.indications_series(&SRC_TRANSPOSE);
+                indicators_gw.execute_bf();
+                res
+            },
+            {
+                let res = indicators_gw.indications_series(&SRC_TRANSPOSE);
+                indicators_gw.execute_bf();
+                res
+            },
+        );
     }
 
     #[test]
@@ -330,7 +361,7 @@ mod tests {
                 procedure_used: vec![],
             },
         )]);
-        let indicators = Indicators::new(&settings, &PACK_IND, &SRC_TRANSPOSE);
+        let indicators = Indicators::new(&SRC_TRANSPOSE, &settings, &PACK_IND);
         let indicators_gw = IndicatorsGateway::new(&indicators, &settings);
         let res_1 = indicators_gw.indications_vec(&SRC_TRANSPOSE)["rsi_1"].clone();
         let res_2 = RSI::new(2).ind_vec(&transpose(vec![OPEN.to_vec()]));
