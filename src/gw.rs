@@ -69,7 +69,6 @@ pub trait IndicatorsExt<'a> {
         &self,
         buffer: &[Vec<f64>],
         s: &'a SETTINGS_INDS,
-        pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
     );
     fn new(
         buffer: &[Vec<f64>],
@@ -93,12 +92,11 @@ impl<'a> IndicatorsExt<'a> for Indicators<'a> {
         &self,
         buffer: &[Vec<f64>],
         s: &'a SETTINGS_INDS,
-        pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
     ) {
         // Indicators are initialized with an empty buffer because the default
         // implementation of `ind_vec` generates values via `ind_coll`, which
         // mutates the buffer.
-        let empty_ind = Indicators::new_empty_bf(s, pack);
+        let empty_ind = self.clone();
         for (k, settings_indicator) in s.iter() {
             self[k.as_str()].init_bf(&get_src(settings_indicator, s, &buffer, &empty_ind));
         }
@@ -109,7 +107,7 @@ impl<'a> IndicatorsExt<'a> for Indicators<'a> {
         pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
     ) -> Self {
         let bind = Indicators::new_empty_bf(s, pack);
-        bind.init_bf(buffer, s, pack);
+        bind.init_bf(buffer, s,);
         bind
     }
 }
