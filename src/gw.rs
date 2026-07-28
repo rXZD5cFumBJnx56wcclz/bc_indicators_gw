@@ -1,6 +1,7 @@
 use bc_indicators::main_trait::Indicator;
 use bc_utils::other::{procedure_used, transpose, vec_len_sync_set};
 use bc_utils_lg::structs::settings::{SETTINGS_IND, SETTINGS_INDS};
+use bc_utils_lg::traits::w::W;
 use bc_utils_lg::types::maps::{MAP, PACK};
 
 pub fn get_src<'a>(
@@ -58,18 +59,15 @@ pub fn get_src_series(
     res
 }
 
-pub type Indicators<'a> = MAP<&'a str, Box<dyn Indicator>>;
+#[derive(Default)]
+pub struct Indicators<'a>(pub MAP<&'a str, Box<dyn Indicator>>);
 
 pub trait IndicatorsExt<'a> {
     fn new_empty_bf(
         settings: &'a SETTINGS_INDS,
         pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
     ) -> Self;
-    fn init_bf(
-        &self,
-        buffer: &[Vec<f64>],
-        s: &'a SETTINGS_INDS,
-    );
+    fn init_bf(&self, buffer: &[Vec<f64>], s: &'a SETTINGS_INDS);
     fn new(
         buffer: &[Vec<f64>],
         s: &'a SETTINGS_INDS,
@@ -79,26 +77,24 @@ pub trait IndicatorsExt<'a> {
 
 impl<'a> IndicatorsExt<'a> for Indicators<'a> {
     fn new_empty_bf(s: &'a SETTINGS_INDS, pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>) -> Self {
-        s.iter()
-            .map(|(indicator_name, settings_indicator)| {
-                (
-                    indicator_name.as_str(),
-                    pack[settings_indicator.key.as_str()](settings_indicator),
-                )
-            })
-            .collect()
+        Indicators(
+            s.iter()
+                .map(|(indicator_name, settings_indicator)| {
+                    (
+                        indicator_name.as_str(),
+                        pack[settings_indicator.key.as_str()](settings_indicator),
+                    )
+                })
+                .collect(),
+        )
     }
-    fn init_bf(
-        &self,
-        buffer: &[Vec<f64>],
-        s: &'a SETTINGS_INDS,
-    ) {
+    fn init_bf(&self, buffer: &[Vec<f64>], s: &'a SETTINGS_INDS) {
         // Indicators are initialized with an empty buffer because the default
         // implementation of `ind_vec` generates values via `ind_coll`, which
         // mutates the buffer.
-        let empty_ind = self.clone();
+        let empty_ind = self.0.clone();
         for (k, settings_indicator) in s.iter() {
-            self[k.as_str()].init_bf(&get_src(settings_indicator, s, &buffer, &empty_ind));
+            self.0[k.as_str()].init_bf(&get_src(settings_indicator, s, &buffer, &empty_ind));
         }
     }
     fn new(
@@ -107,18 +103,20 @@ impl<'a> IndicatorsExt<'a> for Indicators<'a> {
         pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
     ) -> Self {
         let bind = Indicators::new_empty_bf(s, pack);
-        bind.init_bf(buffer, s,);
+        bind.init_bf(buffer, s);
         bind
     }
 }
 
-pub fn get_w_max(s: &SETTINGS_INDS, pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>) -> usize {
-    Indicators::new_empty_bf(s, pack)
-        .values()
-        .into_iter()
-        .map(|ind| ind.w())
-        .max()
-        .unwrap()
+impl W for Indicators<'_> {
+    fn w(&self) -> usize {
+        self.0
+            .values()
+            .into_iter()
+            .map(|ind| ind.w())
+            .max()
+            .unwrap()
+    }
 }
 
 #[derive(Default)]
@@ -141,7 +139,7 @@ impl<'a> IndicatorsGateway<'a> {
             .iter()
             .fold(MAP::default(), |mut map, setting| {
                 let key_uniq_str = setting.0.as_str();
-                let indicator = unsafe { &(&(*self.indicators))[key_uniq_str] };
+                let indicator = &unsafe { &*self.indicators }.0[key_uniq_str];
                 map.insert(
                     key_uniq_str,
                     indicator.ind(&get_src_series(&setting.1, buffer_in, &map)),
@@ -150,7 +148,7 @@ impl<'a> IndicatorsGateway<'a> {
             })
     }
     pub fn execute_bf(&self) {
-        for ind in unsafe { &*self.indicators }.values() {
+        for ind in unsafe { &*self.indicators }.0.values() {
             ind.execute_bf();
         }
     }
@@ -158,12 +156,12 @@ impl<'a> IndicatorsGateway<'a> {
         unsafe { &*self.settings }
             .iter()
             .map(|(k, setting)| {
-                let key_uniq = k.as_str();
-                let indicator = unsafe { &(&(*self.indicators))[key_uniq] };
+                let key_uniq_str = k.as_str();
+                let indicator = &unsafe { &*self.indicators }.0[key_uniq_str];
                 (
-                    key_uniq,
+                    key_uniq_str,
                     indicator.ind_vec(&get_src(setting, unsafe { &*self.settings }, src, unsafe {
-                        &(*self.indicators)
+                        &(*self.indicators).0
                     })),
                 )
             })
@@ -202,7 +200,7 @@ mod tests {
             },
         )]);
         let res = Indicators::new_empty_bf(&settings, &PACK_IND);
-        let res_1 = res.get("rsi_1").unwrap().as_ref();
+        let res_1 = res.0.get("rsi_1").unwrap().as_ref();
         let rsi_test_1 = RSI::new(10);
         let rsi_test_2 = (res_1 as &dyn Any).downcast_ref::<RSI>().unwrap();
         assert_eq_pr!(&rsi_test_1, rsi_test_2);
