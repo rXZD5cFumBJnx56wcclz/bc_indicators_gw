@@ -4,13 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bc_indicators = {path = "../bc_indicators"}
-bc_utils_lg = {path = "../bc_utils_lg"}
-bc_utils = {path = "../bc_utils"}
+bc_indicators ={ git = "https://github.com/rXZD5cFumBJnx56wcclz/bc_indicators.git", branch = "main"}
+bc_utils_lg ={ git = "https://github.com/rXZD5cFumBJnx56wcclz/bc_utils_lg.git", branch = "main"}
+bc_utils = {git = "https://github.com/rXZD5cFumBJnx56wcclz/bc_utils.git", branch = "main"}
 
 [dev-dependencies]
-bc_test_kit = {path = "../bc_test_kit"}
-bc_packs = {path = "../bc_packs"}
+bc_test_kit = {git = "https://github.com/rXZD5cFumBJnx56wcclz/bc_test_kit.git", branch = "main"}
+bc_packs = {git = "https://github.com/rXZD5cFumBJnx56wcclz/bc_packs.git", branch = "main"}
 
 criterion = {version = "0.3.5", features = ["html_reports"]}
 pretty_assertions = "1"
