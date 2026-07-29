@@ -1,32 +1,22 @@
 use bc_indicators::main_trait::Indicator;
 use bc_utils::other::{procedure_used, transpose, vec_len_sync_set};
 use bc_utils_lg::structs::settings::{SETTINGS_IND, SETTINGS_INDS};
-use bc_utils_lg::traits::w::W;
-use bc_utils_lg::types::maps::{MAP, PACK};
+use bc_utils_lg::types::maps::{MAP, MAP_LINK, PACK};
 
 pub fn get_src<'a>(
+    buffer: &[Vec<f64>],
+    indications: &MAP<&str, Vec<f64>>,
     s: &SETTINGS_IND,
-    settings: &SETTINGS_INDS,
-    src: &[Vec<f64>],
-    map_indicators: &MAP<&'a str, Box<dyn Indicator>>,
 ) -> Vec<Vec<f64>> {
     let mut res = vec![];
     for used_src_el in &s.used_src {
         res.push({
-            let sk = &src[used_src_el.index];
+            let sk = &buffer[used_src_el.index];
             sk[..sk.len() - used_src_el.sub_from_last_i].to_vec()
         });
     }
-    for used_ind_el in &s.used_ind {
-        res.push(map_indicators[used_ind_el.as_str()].ind_vec(
-            // recursive func
-            &get_src(
-                &settings[used_ind_el.as_str()],
-                settings,
-                src,
-                map_indicators,
-            ),
-        ));
+    for used_ind in &s.used_ind {
+        res.push(indications[used_ind.as_str()].clone());
     }
     if !s.procedure_used.is_empty() {
         res = procedure_used(res, &s.procedure_used);
@@ -39,14 +29,14 @@ pub fn get_src<'a>(
 }
 
 pub fn get_src_series(
-    s: &SETTINGS_IND,
-    src: &[Vec<f64>],
+    buffer: &[Vec<f64>],
     indications: &MAP<&str, f64>,
+    s: &SETTINGS_IND,
 ) -> Vec<f64> {
     let mut res = vec![];
     for us_el in &s.used_src {
         res.push({
-            let sk = &src[us_el.index];
+            let sk = &buffer[us_el.index];
             sk[sk.len() - 1 - us_el.sub_from_last_i]
         });
     }
@@ -59,24 +49,33 @@ pub fn get_src_series(
     res
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Indicators<'a>(pub MAP<&'a str, Box<dyn Indicator>>);
 
-pub trait IndicatorsExt<'a> {
-    fn new_empty_bf(
-        settings: &'a SETTINGS_INDS,
-        pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
-    ) -> Self;
-    fn init_bf(&self, buffer: &[Vec<f64>], s: &'a SETTINGS_INDS);
-    fn new(
-        buffer: &[Vec<f64>],
-        s: &'a SETTINGS_INDS,
-        pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
-    ) -> Self;
+impl Indicators<'_> {
+    pub fn w(&self, s: &SETTINGS_INDS) -> usize {
+        let mut w = self
+            .0
+            .iter()
+            .map(|(k, ind)| (*k, ind.w()))
+            .collect::<MAP_LINK<&str, usize>>();
+        for (k, setting) in s {
+            *w.get_mut(k.as_str()).unwrap() = setting
+                .used_ind
+                .iter()
+                .map(|used| w[used.as_str()])
+                .sum::<usize>()
+                + w[k.as_str()];
+        }
+        w.values().copied().max().unwrap()
+    }
 }
 
-impl<'a> IndicatorsExt<'a> for Indicators<'a> {
-    fn new_empty_bf(s: &'a SETTINGS_INDS, pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>) -> Self {
+impl<'a> Indicators<'a> {
+    pub fn new_empty_bf(
+        s: &'a SETTINGS_INDS,
+        pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
+    ) -> Self {
         Indicators(
             s.iter()
                 .map(|(indicator_name, settings_indicator)| {
@@ -88,16 +87,24 @@ impl<'a> IndicatorsExt<'a> for Indicators<'a> {
                 .collect(),
         )
     }
-    fn init_bf(&self, buffer: &[Vec<f64>], s: &'a SETTINGS_INDS) {
-        // Indicators are initialized with an empty buffer because the default
-        // implementation of `ind_vec` generates values via `ind_coll`, which
-        // mutates the buffer.
-        let empty_ind = self.0.clone();
-        for (k, settings_indicator) in s.iter() {
-            self.0[k.as_str()].init_bf(&get_src(settings_indicator, s, &buffer, &empty_ind));
+    pub fn init_bf(&self, buffer: &[Vec<f64>], s: &'a SETTINGS_INDS) {
+        let mut map = MAP::default();
+        for (k, setting) in s.iter() {
+            let indicator = &self.0[k.as_str()];
+            let src = get_src(buffer, &map, setting);
+            indicator.init_bf(&src[..indicator.w()]);
+            map.insert(k.as_str(), indicator.ind_vec(&src[indicator.w()..]));
+            // This step is optional, but it improves numerical accuracy.
+            //
+            // A buffer obtained through incremental updates (`w + n` source values)
+            // may differ slightly from a buffer initialized directly from the minimum
+            // required window (`w` source values). The discrepancy is caused by the
+            // accumulation of small numerical errors during updates. Reinitialization
+            // eliminates this difference.
+            indicator.init_bf(&src);
         }
     }
-    fn new(
+    pub fn new(
         buffer: &[Vec<f64>],
         s: &'a SETTINGS_INDS,
         pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
@@ -108,64 +115,33 @@ impl<'a> IndicatorsExt<'a> for Indicators<'a> {
     }
 }
 
-impl W for Indicators<'_> {
-    fn w(&self) -> usize {
-        self.0
-            .values()
-            .into_iter()
-            .map(|ind| ind.w())
-            .max()
-            .unwrap()
-    }
-}
-
-#[derive(Default)]
-pub struct IndicatorsGateway<'a> {
-    pub indicators: *const Indicators<'a>,
-    pub settings: *const SETTINGS_INDS,
-}
-
-impl<'a> IndicatorsGateway<'a> {
-    pub fn new(indicators: *const Indicators<'a>, settings: &'a SETTINGS_INDS) -> Self {
-        Self {
-            indicators,
-            settings,
-        }
-    }
-}
-impl<'a> IndicatorsGateway<'a> {
-    pub fn indications_series(&self, buffer_in: &[Vec<f64>]) -> MAP<&'a str, f64> {
-        unsafe { &*self.settings }
-            .iter()
-            .fold(MAP::default(), |mut map, setting| {
-                let key_uniq_str = setting.0.as_str();
-                let indicator = &unsafe { &*self.indicators }.0[key_uniq_str];
-                map.insert(
-                    key_uniq_str,
-                    indicator.ind(&get_src_series(&setting.1, buffer_in, &map)),
-                );
-                map
-            })
+impl<'a> Indicators<'a> {
+    pub fn series(&self, buffer_in: &[Vec<f64>], s: &'a SETTINGS_INDS) -> MAP<&'a str, f64> {
+        s.iter().fold(MAP::default(), |mut map, setting| {
+            let key_uniq_str = setting.0.as_str();
+            let indicator = &self.0[key_uniq_str];
+            map.insert(
+                key_uniq_str,
+                indicator.ind(&get_src_series(buffer_in, &map, &setting.1)),
+            );
+            map
+        })
     }
     pub fn execute_bf(&self) {
-        for ind in unsafe { &*self.indicators }.0.values() {
+        for ind in self.0.values() {
             ind.execute_bf();
         }
     }
-    pub fn indications_vec(&self, src: &[Vec<f64>]) -> MAP<&'a str, Vec<f64>> {
-        unsafe { &*self.settings }
-            .iter()
-            .map(|(k, setting)| {
-                let key_uniq_str = k.as_str();
-                let indicator = &unsafe { &*self.indicators }.0[key_uniq_str];
-                (
-                    key_uniq_str,
-                    indicator.ind_vec(&get_src(setting, unsafe { &*self.settings }, src, unsafe {
-                        &(*self.indicators).0
-                    })),
-                )
-            })
-            .collect()
+    pub fn vec(&self, src: &[Vec<f64>], s: &'a SETTINGS_INDS) -> MAP<&'a str, Vec<f64>> {
+        s.iter().fold(Default::default(), |mut init, (k, setting)| {
+            let key_uniq_str = k.as_str();
+            let indicator = &self.0[key_uniq_str];
+            init.insert(
+                key_uniq_str,
+                indicator.ind_vec(&get_src(src, &init, setting)),
+            );
+            init
+        })
     }
 }
 
@@ -174,196 +150,123 @@ mod tests {
     use std::any::Any;
 
     use bc_indicators::prelude::Indicator;
-    use bc_indicators::{rma::RMA, rsi::RSI};
+    use bc_indicators::rma::RMA;
+    use bc_indicators::sma::SMA;
     use bc_packs::PACK_IND;
     use bc_test_kit::prelude::*;
-    use bc_utils::nums::{nz_coll, round_f};
+
     use bc_utils::other::transpose;
-    use bc_utils_lg::structs::settings::{SETTINGS_IND, SETTINGS_INDS, SETTINGS_USED_USIZE};
+
+    use bc_utils_lg::traits::w::W;
     use bc_utils_lg::types::maps::MAP;
     use pretty_assertions::assert_eq as assert_eq_pr;
 
     use super::*;
 
     #[test]
-    fn indicators_from_settings_without_bf_res_1() {
-        let settings = SETTINGS_INDS::from_iter([(
-            "rsi_1".to_string(),
-            SETTINGS_IND {
-                key: "rsi".to_string(),
-                kwargs_usize: MAP::from_iter([("window".to_string(), 10)]),
-                kwargs_f64: MAP::default(),
-                kwargs_string: MAP::default(),
-                used_src: vec![],
-                used_ind: vec![],
-                procedure_used: vec![],
-            },
-        )]);
-        let res = Indicators::new_empty_bf(&settings, &PACK_IND);
-        let res_1 = res.0.get("rsi_1").unwrap().as_ref();
-        let rsi_test_1 = RSI::new(10);
-        let rsi_test_2 = (res_1 as &dyn Any).downcast_ref::<RSI>().unwrap();
-        assert_eq_pr!(&rsi_test_1, rsi_test_2);
+    fn new_empty_bf_res_1() {
+        let res = Indicators::new_empty_bf(&INDICATIONS, &PACK_IND);
+        let res_1 = res.0.get("rma_1").unwrap().as_ref();
+        let rma_test_1 = RMA::new(2);
+        let rma_test_2 = (res_1 as &dyn Any).downcast_ref::<RMA>().unwrap();
+        assert_eq_pr!(&rma_test_1, rma_test_2);
     }
 
     #[test]
-    fn indication_res_1() {
-        let settings = SETTINGS_INDS::from_iter([
-            (
-                "rsi_1".to_string(),
-                SETTINGS_IND {
-                    key: "rsi".to_string(),
-                    kwargs_usize: MAP::from_iter([("window".to_string(), 2)]),
-                    kwargs_f64: MAP::default(),
-                    kwargs_string: MAP::default(),
-                    used_src: vec![SETTINGS_USED_USIZE {
-                        index: 1,
-                        sub_from_last_i: 0,
-                    }],
-                    used_ind: vec![],
-                    procedure_used: vec![],
-                },
-            ),
-            (
-                "rma_1".to_string(),
-                SETTINGS_IND {
-                    key: "rma".to_string(),
-                    kwargs_usize: MAP::from_iter([("window".to_string(), 2)]),
-                    kwargs_f64: MAP::default(),
-                    kwargs_string: MAP::default(),
-                    used_src: vec![],
-                    used_ind: vec!["rsi_1".to_string()],
-                    procedure_used: vec![],
-                },
-            ),
-            (
-                "avg_1".to_string(),
-                SETTINGS_IND {
-                    key: "avg".to_string(),
-                    kwargs_usize: MAP::from_iter([]),
-                    kwargs_f64: MAP::default(),
-                    kwargs_string: MAP::default(),
-                    used_src: vec![
-                        SETTINGS_USED_USIZE {
-                            index: 1,
-                            sub_from_last_i: 0,
-                        },
-                        SETTINGS_USED_USIZE {
-                            index: 4,
-                            sub_from_last_i: 2,
-                        },
-                    ],
-                    used_ind: vec!["rma_1".to_string()],
-                    procedure_used: vec![],
-                },
-            ),
-            (
-                "repeat_1".to_string(),
-                SETTINGS_IND {
-                    key: "repeat".to_string(),
-                    kwargs_f64: MAP::from_iter([("value".to_string(), 1.0)]),
-                    ..Default::default()
-                },
-            ),
-            (
-                "repeat_2".to_string(),
-                SETTINGS_IND {
-                    key: "repeat".to_string(),
-                    kwargs_f64: MAP::from_iter([("value".to_string(), 2.0)]),
-                    ..Default::default()
-                },
-            ),
-            (
-                "minus_1".to_string(),
-                SETTINGS_IND {
-                    key: "minus".to_string(),
-                    used_ind: vec!["repeat_1".to_string(), "repeat_2".to_string()],
-                    procedure_used: vec![1, 0],
-                    ..Default::default()
-                },
-            ),
-        ]);
-        let indicators = Indicators::new(
-            &transpose(transpose(SRC_TRANSPOSE.to_vec())[..49].to_vec()),
-            &settings,
-            &PACK_IND,
-        );
-        let indicators_gw = IndicatorsGateway::new(&indicators, &settings);
-        let res_1 = indicators_gw.indications_series(&SRC_TRANSPOSE);
-        let res_2 = (RMA::new(2).ind_f(
-            &RSI::new(2)
-                .ind_vec(&OPEN.into_iter().map(|v| vec![v]).collect::<Vec<Vec<f64>>>())
-                .into_iter()
-                .map(|v| vec![v])
-                .collect::<Vec<Vec<f64>>>(),
-        ) + CLOSE[47]
-            + OPEN_LAST)
-            / 3.;
-        assert_eq_pr!(round_f(res_1["avg_1"], &4,), round_f(res_2, &4,),);
-        assert_eq_pr!(res_1["minus_1"], 1.0);
+    fn w_res_1() {
+        let res = Indicators::new_empty_bf(&INDICATIONS, &PACK_IND);
+        assert_eq_pr!(34, res.w(&INDICATIONS));
     }
 
     #[test]
-    fn indication_execute_bf_1() {
-        let settings = SETTINGS_INDS::from_iter([(
-            "sma_1".to_string(),
-            SETTINGS_IND {
-                key: "sma".to_string(),
-                kwargs_usize: MAP::from_iter([("window".to_string(), 3)]),
-                kwargs_f64: MAP::default(),
-                kwargs_string: MAP::default(),
-                used_src: vec![SETTINGS_USED_USIZE {
-                    index: 1,
-                    sub_from_last_i: 0,
-                }],
-                used_ind: vec![],
-                procedure_used: vec![],
-            },
-        )]);
-        let indicators = Indicators::new(&SRC_TRANSPOSE, &settings, &PACK_IND);
-        let indicators_gw = IndicatorsGateway::new(&indicators, &settings);
+    fn get_src_res_1() {
         assert_eq_pr!(
-            indicators_gw.indications_series(&SRC_TRANSPOSE),
-            indicators_gw.indications_series(&SRC_TRANSPOSE),
-        );
-        pretty_assertions::assert_ne!(
-            {
-                let res = indicators_gw.indications_series(&SRC_TRANSPOSE);
-                indicators_gw.execute_bf();
-                res
-            },
-            {
-                let res = indicators_gw.indications_series(&SRC_TRANSPOSE);
-                indicators_gw.execute_bf();
-                res
-            },
-        );
+            get_src(&SRC_TRANSPOSE, &Default::default(), &INDICATIONS["rma_1"]),
+            transpose(vec![CLOSE[..49].to_vec()]),
+        )
     }
 
     #[test]
-    fn indications_vec_res_1() {
-        let settings = SETTINGS_INDS::from_iter([(
-            "rsi_1".to_string(),
-            SETTINGS_IND {
-                key: "rsi".to_string(),
-                kwargs_usize: MAP::from_iter([("window".to_string(), 2)]),
-                kwargs_f64: MAP::default(),
-                kwargs_string: MAP::default(),
-                used_src: vec![SETTINGS_USED_USIZE {
-                    index: 1,
-                    sub_from_last_i: 0,
-                }],
-                used_ind: vec![],
-                procedure_used: vec![],
-            },
-        )]);
-        let indicators = Indicators::new(&SRC_TRANSPOSE, &settings, &PACK_IND);
-        let indicators_gw = IndicatorsGateway::new(&indicators, &settings);
-        let res_1 = indicators_gw.indications_vec(&SRC_TRANSPOSE)["rsi_1"].clone();
-        let res_2 = RSI::new(2).ind_vec(&transpose(vec![OPEN.to_vec()]));
+    fn get_src_series_res_1() {
         assert_eq_pr!(
-            nz_coll::<Vec<f64>, _, _>(&res_1, 0.0),
-            nz_coll::<Vec<f64>, _, _>(&res_2, 0.0)
+            get_src_series(&SRC_TRANSPOSE, &Default::default(), &INDICATIONS["rma_1"]),
+            vec![CLOSE[48]],
+        )
+    }
+
+    #[test]
+    fn init_bf_res_1() {
+        let src = transpose(SRC[..49].to_vec());
+        let indicators = Indicators::new(&src, &INDICATIONS, &PACK_IND);
+        let res_1 = indicators.series(&SRC_TRANSPOSE, &INDICATIONS);
+        let rma = RMA::new(2);
+        rma.init_bf(&get_src(&src, &Default::default(), &INDICATIONS["rma_1"]));
+        let rma_res = rma.ind(&[SRC[48][4]]);
+        assert_eq_pr!(res_1["rma_1"], rma_res);
+    }
+
+    #[test]
+    fn series_res_1() {
+        let src = transpose(SRC[..49].to_vec());
+        let indicators = Indicators::new(&src, &INDICATIONS, &PACK_IND);
+        let res_1 = indicators.series(&SRC_TRANSPOSE, &INDICATIONS);
+        let src_rma = get_src(&src, &Default::default(), &INDICATIONS["rma_1"]);
+        let rma = RMA::new(2);
+        rma.init_bf(&src_rma);
+        let rma_res = rma.ind(&[SRC[48][4]]);
+        let rma_sma = RMA::new(2);
+        let sma = SMA::new(14);
+        rma_sma.init_bf(&src_rma[..rma_sma.w()]);
+        sma.init_bf(&get_src(
+            &src,
+            &MAP::from_iter([("rma_1", rma_sma.ind_vec(&src_rma[rma_sma.w()..]))]),
+            &INDICATIONS["sma_1"],
+        ));
+        assert_eq_pr!(res_1["rma_1"], rma_res);
+        assert_eq_pr!(res_1["sma_1"], sma.ind(&[rma_res]));
+    }
+
+    #[test]
+    fn vec_res_1() {
+        let indicators = Indicators::new_empty_bf(&INDICATIONS, &PACK_IND);
+        let (src_buffer, src_vec) = (
+            // + 1 for sub rma
+            transpose(SRC[..indicators.w(&INDICATIONS) + 1].to_vec()),
+            transpose(SRC[indicators.w(&INDICATIONS) + 1..].to_vec()),
+        );
+        indicators.init_bf(&src_buffer, &INDICATIONS);
+        let res = indicators.vec(&src_vec, &INDICATIONS);
+        let rma = RMA::new(2);
+        rma.init_bf(&get_src(
+            &src_buffer.clone(),
+            &Default::default(),
+            &INDICATIONS["rma_1"],
+        ));
+        let sma = SMA::new(14);
+        let rma_sma = RMA::new(2);
+        let src_rma_sma = get_src(
+            &src_buffer.clone(),
+            &Default::default(),
+            &INDICATIONS["rma_1"],
+        );
+        rma_sma.init_bf(&src_rma_sma[..rma_sma.w()]);
+        sma.init_bf(&get_src(
+            &src_buffer,
+            &MAP::from_iter([("rma_1", rma_sma.ind_vec(&src_rma_sma[rma.w()..]))]),
+            &INDICATIONS["sma_1"],
+        ));
+        let map = MAP::from_iter([(
+            "rma_1",
+            rma.ind_vec(&get_src(
+                &src_vec,
+                &Default::default(),
+                &INDICATIONS["rma_1"],
+            )),
+        )]);
+        assert_eq_pr!(&res["rma_1"], &map["rma_1"],);
+        assert_eq_pr!(
+            &res["sma_1"],
+            &sma.ind_vec(&get_src(&src_vec, &map, &INDICATIONS["sma_1"]))
         );
     }
 }
