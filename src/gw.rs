@@ -65,7 +65,13 @@ impl Indicators<'_> {
                 .iter()
                 .map(|used| w[used.as_str()])
                 .sum::<usize>()
-                + w[k.as_str()];
+                + w[k.as_str()]
+                + setting
+                    .used_src
+                    .iter()
+                    .map(|s_src| s_src.sub_from_last_i)
+                    .max()
+                    .unwrap_or_default();
         }
         w.values().copied().max().unwrap()
     }
@@ -175,7 +181,7 @@ mod tests {
     #[test]
     fn w_res_1() {
         let res = Indicators::new_empty_bf(&INDICATIONS, &PACK_IND);
-        assert_eq_pr!(34, res.w(&INDICATIONS));
+        assert_eq_pr!(35, res.w(&INDICATIONS));
     }
 
     #[test]
@@ -230,9 +236,8 @@ mod tests {
     fn vec_res_1() {
         let indicators = Indicators::new_empty_bf(&INDICATIONS, &PACK_IND);
         let (src_buffer, src_vec) = (
-            // + 1 for sub rma
-            transpose(SRC[..indicators.w(&INDICATIONS) + 1].to_vec()),
-            transpose(SRC[indicators.w(&INDICATIONS) + 1..].to_vec()),
+            transpose(SRC[..indicators.w(&INDICATIONS)].to_vec()),
+            transpose(SRC[indicators.w(&INDICATIONS)..].to_vec()),
         );
         indicators.init_bf(&src_buffer, &INDICATIONS);
         let res = indicators.vec(&src_vec, &INDICATIONS);
