@@ -1,6 +1,7 @@
 use bc_indicators::main_trait::Indicator;
 use bc_utils::other::{procedure_used, transpose, vec_len_sync_set};
 use bc_utils_lg::structs::settings::{SETTINGS_IND, SETTINGS_INDS};
+use bc_utils_lg::traits::w::{W, w_scan, w_src, w_sum};
 use bc_utils_lg::types::maps::{MAP, MAP_LINK, PACK};
 
 pub fn get_src<'a>(
@@ -52,28 +53,29 @@ pub fn get_src_series(
 #[derive(Default, Clone)]
 pub struct Indicators<'a>(pub MAP<&'a str, Box<dyn Indicator>>);
 
-impl Indicators<'_> {
-    pub fn w(&self, s: &SETTINGS_INDS) -> usize {
-        let mut w = self
-            .0
-            .iter()
-            .map(|(k, ind)| (*k, ind.w()))
-            .collect::<MAP_LINK<&str, usize>>();
-        for (k, setting) in s {
-            *w.get_mut(k.as_str()).unwrap() = setting
-                .used_ind
-                .iter()
-                .map(|used| w[used.as_str()])
-                .sum::<usize>()
-                + w[k.as_str()]
-                + setting
-                    .used_src
-                    .iter()
-                    .map(|s_src| s_src.sub_from_last_i)
-                    .max()
-                    .unwrap_or_default();
-        }
-        w.values().copied().max().unwrap()
+impl W for Indicators<'_> {
+    fn w(&self) -> usize {
+        self.0.values().map(|v| v.w()).max().unwrap()
+    }
+}
+
+impl<'a> Indicators<'a> {
+    pub fn w_map_all(&self, s: &'a SETTINGS_INDS) -> MAP_LINK<&'a str, usize> {
+        w_scan(
+            self.0.iter(),
+            s.iter(),
+            |v| v.w(),
+            |setting, init, k| {
+                [
+                    w_src(&setting.used_src),
+                    w_sum(&setting.used_ind, &init),
+                    init[k.as_str()],
+                ]
+            },
+        )
+    }
+    pub fn w_all(&self, s: &SETTINGS_INDS) -> usize {
+        self.w_map_all(s).values().copied().max().unwrap()
     }
 }
 
@@ -179,9 +181,11 @@ mod tests {
     }
 
     #[test]
-    fn w_res_1() {
-        let res = Indicators::new_empty_bf(&INDICATIONS, &PACK_IND);
-        assert_eq_pr!(35, res.w(&INDICATIONS));
+    fn w_all_res_1() {
+        assert_eq_pr!(
+            Indicators::new_empty_bf(&INDICATIONS, &PACK_IND).w_all(&INDICATIONS),
+            24
+        );
     }
 
     #[test]
@@ -221,7 +225,7 @@ mod tests {
         rma.init_bf(&src_rma);
         let rma_res = rma.ind(&[SRC[48][4]]);
         let rma_sma = RMA::new(2);
-        let sma = SMA::new(14);
+        let sma = SMA::new(3);
         rma_sma.init_bf(&src_rma[..rma_sma.w()]);
         sma.init_bf(&get_src(
             &src,
@@ -236,8 +240,8 @@ mod tests {
     fn vec_res_1() {
         let indicators = Indicators::new_empty_bf(&INDICATIONS, &PACK_IND);
         let (src_buffer, src_vec) = (
-            transpose(SRC[..indicators.w(&INDICATIONS)].to_vec()),
-            transpose(SRC[indicators.w(&INDICATIONS)..].to_vec()),
+            transpose(SRC[..indicators.w_all(&INDICATIONS)].to_vec()),
+            transpose(SRC[indicators.w_all(&INDICATIONS)..].to_vec()),
         );
         indicators.init_bf(&src_buffer, &INDICATIONS);
         let res = indicators.vec(&src_vec, &INDICATIONS);
@@ -247,7 +251,7 @@ mod tests {
             &Default::default(),
             &INDICATIONS["rma_1"],
         ));
-        let sma = SMA::new(14);
+        let sma = SMA::new(3);
         let rma_sma = RMA::new(2);
         let src_rma_sma = get_src(
             &src_buffer.clone(),
