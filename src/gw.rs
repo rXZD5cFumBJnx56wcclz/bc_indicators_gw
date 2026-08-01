@@ -75,7 +75,7 @@ impl<'a> Indicators<'a> {
         )
     }
     pub fn w_all(&self, s: &SETTINGS_INDS) -> usize {
-        self.w_map_all(s).values().copied().max().unwrap()
+        self.w_map_all(s).values().copied().max().unwrap_or_default()
     }
 }
 
