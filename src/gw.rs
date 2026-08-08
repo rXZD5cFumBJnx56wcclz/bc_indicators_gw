@@ -55,7 +55,7 @@ pub struct Indicators<'a>(pub MAP<&'a str, Box<dyn Indicator>>);
 
 impl W for Indicators<'_> {
     fn w(&self) -> usize {
-        self.0.values().map(|v| v.w()).max().unwrap()
+        self.0.values().map(|v| v.w()).max().unwrap_or_default()
     }
 }
 
@@ -75,7 +75,11 @@ impl<'a> Indicators<'a> {
         )
     }
     pub fn w_all(&self, s: &SETTINGS_INDS) -> usize {
-        self.w_map_all(s).values().copied().max().unwrap_or_default()
+        self.w_map_all(s)
+            .values()
+            .copied()
+            .max()
+            .unwrap_or_default()
     }
 }
 
