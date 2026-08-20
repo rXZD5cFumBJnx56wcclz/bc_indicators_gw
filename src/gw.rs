@@ -84,11 +84,12 @@ impl<'a> Indicators<'a> {
 }
 
 impl<'a> Indicators<'a> {
-    pub fn new_empty_bf(
+    pub fn init_empty(
+        &mut self,
         s: &'a SETTINGS_INDS,
         pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
-    ) -> Self {
-        Indicators(
+    ) {
+        *self = Indicators(
             s.iter()
                 .map(|(indicator_name, settings_indicator)| {
                     (
@@ -97,7 +98,7 @@ impl<'a> Indicators<'a> {
                     )
                 })
                 .collect(),
-        )
+        );
     }
     pub fn init_bf(&self, buffer: &[Vec<f64>], s: &'a SETTINGS_INDS) {
         let mut map = MAP::default();
@@ -116,14 +117,15 @@ impl<'a> Indicators<'a> {
             indicator.init_bf(&src);
         }
     }
-    pub fn new(
+
+    pub fn init(
+        &mut self,
         buffer: &[Vec<f64>],
         s: &'a SETTINGS_INDS,
         pack: &PACK<SETTINGS_IND, Box<dyn Indicator>>,
-    ) -> Self {
-        let bind = Indicators::new_empty_bf(s, pack);
-        bind.init_bf(buffer, s);
-        bind
+    ) {
+        self.init_empty(s, pack);
+        self.init_bf(buffer, s);
     }
 }
 
@@ -177,7 +179,8 @@ mod tests {
 
     #[test]
     fn new_empty_bf_res_1() {
-        let res = Indicators::new_empty_bf(&INDICATIONS, &PACK_IND);
+        let mut res = Indicators::default();
+        res.init_empty(&INDICATIONS, &PACK_IND);
         let res_1 = res.0.get("rma_1").unwrap().as_ref();
         let rma_test_1 = RMA::new(2);
         let rma_test_2 = (res_1 as &dyn Any).downcast_ref::<RMA>().unwrap();
@@ -186,10 +189,9 @@ mod tests {
 
     #[test]
     fn w_all_res_1() {
-        assert_eq_pr!(
-            Indicators::new_empty_bf(&INDICATIONS, &PACK_IND).w_all(&INDICATIONS),
-            24
-        );
+        let mut res = Indicators::default();
+        res.init_empty(&INDICATIONS, &PACK_IND);
+        assert_eq_pr!(res.w_all(&INDICATIONS), 24);
     }
 
     #[test]
@@ -211,7 +213,8 @@ mod tests {
     #[test]
     fn init_bf_res_1() {
         let src = transpose(SRC[..49].to_vec());
-        let indicators = Indicators::new(&src, &INDICATIONS, &PACK_IND);
+        let mut indicators = Indicators::default();
+        indicators.init(&src, &INDICATIONS, &PACK_IND);
         let res_1 = indicators.series(&SRC_TRANSPOSE, &INDICATIONS);
         let rma = RMA::new(2);
         rma.init_bf(&get_src(&src, &Default::default(), &INDICATIONS["rma_1"]));
@@ -222,7 +225,8 @@ mod tests {
     #[test]
     fn series_res_1() {
         let src = transpose(SRC[..49].to_vec());
-        let indicators = Indicators::new(&src, &INDICATIONS, &PACK_IND);
+        let mut indicators = Indicators::default();
+        indicators.init(&src, &INDICATIONS, &PACK_IND);
         let res_1 = indicators.series(&SRC_TRANSPOSE, &INDICATIONS);
         let src_rma = get_src(&src, &Default::default(), &INDICATIONS["rma_1"]);
         let rma = RMA::new(2);
@@ -242,7 +246,8 @@ mod tests {
 
     #[test]
     fn vec_res_1() {
-        let indicators = Indicators::new_empty_bf(&INDICATIONS, &PACK_IND);
+        let mut indicators = Indicators::default();
+        indicators.init_empty(&INDICATIONS, &PACK_IND);
         let (src_buffer, src_vec) = (
             transpose(SRC[..indicators.w_all(&INDICATIONS)].to_vec()),
             transpose(SRC[indicators.w_all(&INDICATIONS)..].to_vec()),
