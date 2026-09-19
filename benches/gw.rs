@@ -4,6 +4,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 
 use bc_packs::PACK_IND;
 use bc_test_kit::prelude::*;
+use bc_utils_lg::test_state::prelude::*;
 
 use bc_indicators_gw::gw::Indicators;
 

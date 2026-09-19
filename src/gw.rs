@@ -161,21 +161,17 @@ impl<'a> Indicators<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::any::Any;
+    use super::*;
 
     use bc_indicators::prelude::Indicator;
     use bc_indicators::rma::RMA;
     use bc_indicators::sma::SMA;
     use bc_packs::PACK_IND;
     use bc_test_kit::prelude::*;
-
     use bc_utils::other::transpose;
-
+    use bc_utils_lg::test_state::prelude::*;
     use bc_utils_lg::traits::w::W;
     use bc_utils_lg::types::maps::MAP;
-    use pretty_assertions::assert_eq as assert_eq_pr;
-
-    use super::*;
 
     #[test]
     fn new_empty_bf_res_1() {

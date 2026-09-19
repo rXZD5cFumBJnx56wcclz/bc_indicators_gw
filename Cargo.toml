@@ -1,11 +1,11 @@
 [package]
 name = "bc_indicators_gw"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 
 [dependencies]
 bc_indicators = {path = "../bc_indicators"}
-bc_utils_lg = {path = "../bc_utils_lg"}
+bc_utils_lg = {path = "../bc_utils_lg", features = ["test_state"]}
 bc_utils = {path = "../bc_utils"}
 
 [dev-dependencies]
@@ -19,3 +19,6 @@ pretty_assertions = "1"
 name = "gw"
 harness = false
 path = "benches/gw.rs"
+
+[features]
+test_state = []
