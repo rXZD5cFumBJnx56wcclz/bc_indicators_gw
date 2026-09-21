@@ -1,14 +1,15 @@
 [package]
 name = "bc_indicators_gw"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 
 [dependencies]
 bc_indicators = {path = "../bc_indicators"}
+bc_gw_utils = {path = "../bc_gw_utils"}
 bc_utils_lg = {path = "../bc_utils_lg", features = ["test_state"]}
-bc_utils = {path = "../bc_utils"}
 
 [dev-dependencies]
+bc_utils = {path = "../bc_utils"}
 bc_test_kit = {path = "../bc_test_kit"}
 bc_packs = {path = "../bc_packs"}
 
