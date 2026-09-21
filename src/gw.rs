@@ -5,7 +5,6 @@ use bc_utils_lg::types::maps::{MAP, MAP_LINK, PACK};
 
 use bc_gw_utils::prelude::*;
 
-
 #[derive(Default, Clone)]
 pub struct Indicators<'a>(pub MAP<&'a str, Box<dyn Indicator>>);
 
@@ -89,20 +88,44 @@ impl<'a> Indicators<'a> {
 }
 
 impl<'a> Indicators<'a> {
-    pub fn series(&self, buffer: &[Vec<f64>], s: &'a SETTINGS_INDS) -> MAP<&'a str, f64> {
+    pub fn series_key(
+        &self,
+        func: impl Fn(&mut SrcGwSeries, &SETTINGS_IND, &MAP<&str, f64>),
+        s: &'a SETTINGS_INDS,
+    ) -> MAP<&'a str, f64> {
         s.iter().fold(MAP::default(), |mut map, (k, setting)| {
             let key_uniq_str = k.as_str();
             let indicator = &self.0[key_uniq_str];
             let mut src = SrcGwSeries::default();
-            src.push_vec(buffer, &setting.used_src);
-            src.push_map(&map, &setting.used_ind);
-            src.all_check(&setting.procedure_used);
-            map.insert(
-                key_uniq_str,
-                indicator.ind(&src),
-            );
+            func(&mut src, setting, &map);
+            map.insert(key_uniq_str, indicator.ind(&src));
             map
         })
+    }
+
+    pub fn vec_key(
+        &self,
+        func: impl Fn(&mut SrcGw, &SETTINGS_IND, &MAP<&str, Vec<f64>>),
+        s: &'a SETTINGS_INDS,
+    ) -> MAP<&'a str, Vec<f64>> {
+        s.iter().fold(MAP::default(), |mut map, (k, setting)| {
+            let key_uniq_str = k.as_str();
+            let indicator = &self.0[key_uniq_str];
+            let mut src = SrcGw::default();
+            func(&mut src, setting, &map);
+            map.insert(key_uniq_str, indicator.ind_vec(&src));
+            map
+        })
+    }
+    pub fn series(&self, buffer: &[Vec<f64>], s: &'a SETTINGS_INDS) -> MAP<&'a str, f64> {
+        self.series_key(
+            |src, setting, map| {
+                src.push_vec(buffer, &setting.used_src);
+                src.push_map(&map, &setting.used_ind);
+                src.all_check(&setting.procedure_used);
+            },
+            s,
+        )
     }
     pub fn execute_bf(&self) {
         for ind in self.0.values() {
@@ -110,19 +133,14 @@ impl<'a> Indicators<'a> {
         }
     }
     pub fn vec(&self, buffer: &[Vec<f64>], s: &'a SETTINGS_INDS) -> MAP<&'a str, Vec<f64>> {
-        s.iter().fold(Default::default(), |mut map, (k, setting)| {
-            let key_uniq_str = k.as_str();
-            let indicator = &self.0[key_uniq_str];
-            let mut src = SrcGw::default();
-            src.push_vec(buffer, &setting.used_src);
-            src.push_map(&map, &setting.used_ind);
-            src.all_check(&setting.procedure_used);
-            map.insert(
-                key_uniq_str,
-                indicator.ind_vec(&src),
-            );
-            map
-        })
+        self.vec_key(
+            |src, setting, map| {
+                src.push_vec(buffer, &setting.used_src);
+                src.push_map(&map, &setting.used_ind);
+                src.all_check(&setting.procedure_used);
+            },
+            s,
+        )
     }
 }
 
@@ -189,7 +207,10 @@ mod tests {
         rma_sma.init_bf(&src_rma[..rma_sma.w()]);
         let mut src_test = SrcGw::default();
         src_test.push_vec(&src, &INDICATIONS["sma_1"].used_src);
-        src_test.push_map(&MAP::from_iter([("rma_1", rma_sma.ind_vec(&src_rma[rma_sma.w()..]))]), &INDICATIONS["sma_1"].used_ind);
+        src_test.push_map(
+            &MAP::from_iter([("rma_1", rma_sma.ind_vec(&src_rma[rma_sma.w()..]))]),
+            &INDICATIONS["sma_1"].used_ind,
+        );
         src_test.all_check(&INDICATIONS["sma_1"].procedure_used);
         sma.init_bf(&src_test);
         assert_eq_pr!(res_1["rma_1"], rma_res);
@@ -219,24 +240,21 @@ mod tests {
         rma_sma.init_bf(&src_rma_sma[..rma_sma.w()]);
         let mut src_sma_ = SrcGw::default();
         src_sma_.push_vec(&src_buffer.clone(), &INDICATIONS["sma_1"].used_src);
-        src_sma_.push_map(&MAP::from_iter([("rma_1", rma_sma.ind_vec(&src_rma_sma[rma.w()..]))]), &INDICATIONS["sma_1"].used_ind);
+        src_sma_.push_map(
+            &MAP::from_iter([("rma_1", rma_sma.ind_vec(&src_rma_sma[rma.w()..]))]),
+            &INDICATIONS["sma_1"].used_ind,
+        );
         src_sma_.all_check(&INDICATIONS["sma_1"].procedure_used);
         sma.init_bf(&src_sma_);
         let mut src_rma_vec = SrcGw::default();
         src_rma_vec.push_vec(&src_vec, &INDICATIONS["rma_1"].used_src);
         src_rma_vec.all_check(&INDICATIONS["rma_1"].procedure_used);
-        let map = MAP::from_iter([(
-            "rma_1",
-            rma.ind_vec(&src_rma_vec),
-        )]);
+        let map = MAP::from_iter([("rma_1", rma.ind_vec(&src_rma_vec))]);
         assert_eq_pr!(&res["rma_1"], &map["rma_1"],);
         let mut src_sma_vec = SrcGw::default();
         src_sma_vec.push_vec(&src_vec, &INDICATIONS["sma_1"].used_src);
         src_sma_vec.push_map(&map, &INDICATIONS["sma_1"].used_ind);
         src_sma_vec.all_check(&INDICATIONS["sma_1"].procedure_used);
-        assert_eq_pr!(
-            &res["sma_1"],
-            &sma.ind_vec(&src_sma_vec)
-        );
+        assert_eq_pr!(&res["sma_1"], &sma.ind_vec(&src_sma_vec));
     }
 }
